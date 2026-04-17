@@ -1,0 +1,31 @@
+# Root gitignore
+.DS_Store
+*.log
+*.zip
+*.rar
+.idea/
+.vscode/
+
+# Flutter specific
+goroute_app/.dart_tool/
+goroute_app/.flutter-plugins
+goroute_app/.flutter-plugins-dependencies
+goroute_app/.packages
+goroute_app/build/
+goroute_app/ios/Flutter/Generated.xcconfig
+goroute_app/ios/Flutter/flutter_export_environment.sh
+goroute_app/android/local.properties
+goroute_app/android/app/google-services.json
+
+# Node specific
+node_modules/
+goroute-admin/node_modules/
+goroute-admin/dist/
+goroute-admin/.env
+goroute-admin/.firebase/
+goroute-admin/firebase-debug.log
+
+# Build artifacts
+dist/
+build/
+bin/

@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* ❌ Ye line DELETE kar dein kyunki humein dark variant nahi chahiye */
+/* @custom-variant dark (&:where(.dark, .dark *)); */
+
+/* Default Body Style (Sirf Light Mode ke liye) */
+body {
+  @apply bg-gray-50 text-gray-900;
+  background-color: #f9fafb !important; /* Force light background */
+  color: #111827 !important;           /* Force dark text */
+}
