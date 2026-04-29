@@ -4,25 +4,25 @@ import { AuthProvider } from './contexts/AuthContext';
 import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
+import Drivers from './pages/Drivers';
+import Passengers from './pages/Passengers';
+import AppRoutes from './pages/Routes';
+import LiveTracking from './pages/LiveTracking';
+import Notifications from './pages/Notifications';
 import ProtectedRoute from './components/ProtectedRoute';
 
-// Placeholder component
-const Placeholder = ({ title }: { title: string }) => (
-  <div className="card p-6">
-    <h1 className="text-2xl font-bold text-gray-800 dark:text-white">{title}</h1>
-    <p className="text-gray-500 mt-2">This feature is coming soon...</p>
-  </div>
-);
+import SupportRequests from './pages/SupportRequests';
+import BusAlerts from './pages/BusAlerts';
 
 function App() {
   return (
     <AuthProvider>
       <Router>
         <Routes>
-          {/* Public Route */}
+          {/* Public */}
           <Route path="/login" element={<Login />} />
 
-          {/* Protected Admin Routes */}
+          {/* Protected admin routes */}
           <Route
             path="/"
             element={
@@ -32,14 +32,15 @@ function App() {
             }
           >
             <Route index element={<Dashboard />} />
-            <Route path="tracking" element={<Placeholder title="Live Tracking Map" />} />
-            <Route path="routes" element={<Placeholder title="Route Management" />} />
-            <Route path="drivers" element={<Placeholder title="Driver Assignment" />} />
-            <Route path="users" element={<Placeholder title="User Management" />} />
-            <Route path="notifications" element={<Placeholder title="Push Notifications" />} />
+            <Route path="drivers" element={<Drivers />} />
+            <Route path="users" element={<Passengers />} />
+            <Route path="routes" element={<AppRoutes />} />
+            <Route path="tracking" element={<LiveTracking />} />
+            <Route path="notifications" element={<Notifications />} />
+            <Route path="support" element={<SupportRequests />} />
+            <Route path="bus-alerts" element={<BusAlerts />} />
           </Route>
 
-          {/* Catch-all: Redirect unknown routes to Dashboard */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Router>

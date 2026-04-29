@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand maroon — used as the NormalTheme window background so there
+         is no color jump between the splash and the first Flutter frame. -->
+    <color name="splash_bg">#8B0000</color>
+</resources>

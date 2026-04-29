@@ -1,224 +1,246 @@
-// src/pages/Login.tsx
-
-import React, { useState } from "react";
+import React, { useState } from 'react';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithPopup,
-  updateProfile
-} from "firebase/auth";
+  updateProfile,
+} from 'firebase/auth';
+import {
+  doc,
+  setDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
+import { useNavigate } from 'react-router-dom';
+import { Mail, Lock, Loader2, User, ShieldCheck } from 'lucide-react';
+import { auth, db } from '../firebase';
+import { getUserRole, adminExists } from '../services/firestore';
 
-import { auth, db } from "../firebase";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
-import { useNavigate } from "react-router-dom";
-import { Bus, Lock, Mail, Loader2, User } from 'lucide-react';
-
-const Login = () => {
-  const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
+const Login: React.FC = () => {
+  const [isLogin, setIsLogin] = useState<boolean>(true);
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [name, setName] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>('');
   const navigate = useNavigate();
 
-  // ✅ SAVE USER TO FIRESTORE
-  const saveUser = async (user: any) => {
-    try {
-      await setDoc(
-        doc(db, "users", user.uid),
-        {
-          uid: user.uid,
-          name: user.displayName || name || "Admin",
-          email: user.email,
-          role: "admin", // By default, we set admin role for web logins
-          isOnline: true,
-          createdAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } catch (e) {
-      console.error("Error saving user:", e);
+  const clearError = () => setError('');
+
+  const verifyAdminRole = async (uid: string): Promise<boolean> => {
+    const role = await getUserRole(uid);
+    if (role !== 'admin') {
+      await auth.signOut();
+      setError('Invalid role access. This panel is for admins only.');
+      return false;
     }
+    return true;
   };
 
-  // ================= EMAIL AUTH =================
-  const handleEmailAuth = async (e: React.FormEvent) => {
+  const handleEmailAuth = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setError("");
+    clearError();
     setLoading(true);
 
     try {
       if (isLogin) {
         const res = await signInWithEmailAndPassword(auth, email, password);
-        await saveUser(res.user);
+
+        const ok = await verifyAdminRole(res.user.uid);
+        if (!ok) return;
+
+        await setDoc(
+          doc(db, 'users', res.user.uid),
+          { lastLogin: serverTimestamp(), isOnline: true },
+          { merge: true }
+        );
+
+        navigate('/');
       } else {
+        if (await adminExists()) {
+          setError('Admin already exists. Only one admin account is allowed.');
+          return;
+        }
+
         const res = await createUserWithEmailAndPassword(auth, email, password);
 
         await updateProfile(res.user, {
           displayName: name,
         });
 
-        await saveUser(res.user);
+        await setDoc(doc(db, 'users', res.user.uid), {
+          uid: res.user.uid,
+          name: name || 'Admin',
+          email: res.user.email,
+          role: 'admin',
+          isActive: true,
+          isOnline: true,
+          createdAt: serverTimestamp(),
+          lastLogin: serverTimestamp(),
+        });
+
+        navigate('/');
       }
-
-      navigate("/"); // Navigate to root (Dashboard)
-
     } catch (err: any) {
-      setError(err.message || "Authentication failed. Please check your credentials.");
+      setError(err.message || 'Authentication failed.');
     } finally {
       setLoading(false);
     }
   };
 
-  // ================= GOOGLE AUTH =================
   const handleGoogle = async () => {
-    setError("");
+    clearError();
     setLoading(true);
+
     try {
       const provider = new GoogleAuthProvider();
       const res = await signInWithPopup(auth, provider);
 
-      await saveUser(res.user);
+      const existingRole = await getUserRole(res.user.uid);
 
-      navigate("/"); // Navigate to root (Dashboard)
+      if (existingRole === null) {
+        if (await adminExists()) {
+          await auth.signOut();
+          setError('Admin already exists. Only one admin account is allowed.');
+          return;
+        }
 
-    } catch (err: any) {
-      setError("Google Sign-In Failed");
+        await setDoc(doc(db, 'users', res.user.uid), {
+          uid: res.user.uid,
+          name: res.user.displayName || 'Admin',
+          email: res.user.email,
+          role: 'admin',
+          isActive: true,
+          isOnline: true,
+          createdAt: serverTimestamp(),
+          lastLogin: serverTimestamp(),
+        });
+      } else {
+        const ok = await verifyAdminRole(res.user.uid);
+        if (!ok) return;
+
+        await setDoc(
+          doc(db, 'users', res.user.uid),
+          { lastLogin: serverTimestamp(), isOnline: true },
+          { merge: true }
+        );
+      }
+
+      navigate('/');
+    } catch (err) {
+      setError('Google Sign-In failed.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
-      <div className="max-w-md w-full space-y-8 card">
-        <div className="text-center">
-          <div className="mx-auto h-16 w-16 bg-primary rounded-2xl flex items-center justify-center shadow-lg">
-            <Bus className="h-10 w-10 text-white" />
-          </div>
-          <h2 className="mt-6 text-3xl font-extrabold text-gray-900 dark:text-white">
-            GoRoute Admin
-          </h2>
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            {isLogin ? "Sign in to your admin account" : "Create a new admin account"}
-          </p>
-        </div>
-        
-        <form className="mt-8 space-y-6" onSubmit={handleEmailAuth}>
-          {error && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-lg text-sm">
-              {error}
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <div className="w-full max-w-md">
+
+        {/* CARD */}
+        <div className="bg-white rounded-3xl shadow-xl overflow-hidden">
+
+          {/* HEADER */}
+          <div className="bg-[#800000] px-8 py-10 text-center">
+
+            {/* LOGO */}
+            <div className="mx-auto h-16 w-16 bg-white rounded-2xl flex items-center justify-center shadow-lg mb-4">
+              <img
+                src="/logo.jpeg"
+                alt="GoRoute Logo"
+                className="h-10 w-10 object-contain"
+              />
             </div>
-          )}
-          
-          <div className="space-y-4">
-            {!isLogin && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Full Name
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <User className="h-5 w-5 text-gray-400" />
-                  </div>
-                  <input
-                    type="text"
-                    required
-                    className="input-field pl-10"
-                    placeholder="Admin Name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                  />
-                </div>
+
+            <h1 className="text-2xl font-bold text-white">GoRoute Admin</h1>
+            <p className="text-white/70 text-sm mt-1">
+              {isLogin ? 'Sign in to your admin account' : 'Create admin account'}
+            </p>
+          </div>
+
+          {/* FORM */}
+          <div className="px-8 py-8">
+
+            {/* Tabs */}
+            <div className="flex bg-gray-100 rounded-xl p-1 mb-6">
+              {['Sign In', 'Register'].map((tab) => {
+                const active = (tab === 'Sign In') === isLogin;
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setIsLogin(tab === 'Sign In')}
+                    className={`flex-1 py-2 text-sm font-semibold rounded-lg ${
+                      active ? 'bg-white text-[#800000]' : 'text-gray-500'
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ERROR */}
+            {error && (
+              <div className="mb-4 bg-red-50 p-3 rounded-xl text-red-600 text-sm">
+                {error}
               </div>
             )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Email Address
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  type="email"
-                  required
-                  className="input-field pl-10"
-                  placeholder="admin@goroute.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Password
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  type="password"
-                  required
-                  className="input-field pl-10"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
+            <form onSubmit={handleEmailAuth} className="space-y-4">
 
-          <div className="space-y-4">
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full btn-primary flex items-center justify-center py-3"
-            >
-              {loading ? (
-                <Loader2 className="animate-spin h-5 w-5" />
-              ) : (
-                isLogin ? 'Sign In' : 'Create Account'
+              {!isLogin && (
+                <input
+                  type="text"
+                  placeholder="Full Name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full p-3 border rounded-xl"
+                />
               )}
-            </button>
 
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-200 dark:border-gray-700"></div>
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white dark:bg-gray-800 text-gray-500">Or continue with</span>
-              </div>
-            </div>
+              <input
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full p-3 border rounded-xl"
+              />
 
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full p-3 border rounded-xl"
+              />
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-[#800000] text-white py-3 rounded-xl"
+              >
+                {loading ? 'Loading...' : isLogin ? 'Sign In' : 'Create Admin'}
+              </button>
+            </form>
+
+            {/* GOOGLE BUTTON (FIXED) */}
             <button
-              type="button"
               onClick={handleGoogle}
-              disabled={loading}
-              className="w-full flex items-center justify-center gap-3 px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+              className="w-full mt-4 border py-3 rounded-xl flex items-center justify-center gap-3 hover:bg-gray-50"
             >
-              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="h-5 w-5" alt="Google" />
-              <span>Google</span>
+              <img
+                src="/google.jpeg"
+                alt="Google"
+                className="h-5 w-5"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+              <span>Google Sign In</span>
             </button>
-          </div>
-        </form>
 
-        <div className="text-center">
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
-            <button
-              onClick={() => setIsLogin(!isLogin)}
-              className="font-bold text-primary hover:text-red-800 transition-colors"
-            >
-              {isLogin ? "Register Now" : "Sign In"}
-            </button>
-          </p>
+          </div>
         </div>
       </div>
     </div>

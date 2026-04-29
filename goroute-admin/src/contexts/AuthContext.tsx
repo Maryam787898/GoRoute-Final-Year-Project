@@ -1,41 +1,64 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
-import { onAuthStateChanged, User } from 'firebase/auth'
-import { auth } from '../firebase'
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '../firebase';
 
 interface AuthContextType {
-  user: User | null
-  loading: boolean
-  isAdmin: boolean
+  currentUser: User | null;
+  loading: boolean;
+  isAdmin: boolean;
+  userRole: string | null;
 }
 
-const AuthContext = createContext<AuthContextType | null>(null)
+const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [isAdmin, setIsAdmin] = useState(false)
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user)
-      setIsAdmin(!!user)
-      setLoading(false)
-    })
+    let roleUnsub: (() => void) | null = null;
 
-    return () => unsubscribe()
-  }, [])
+    const authUnsub = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+
+      // Clean up previous role listener
+      if (roleUnsub) {
+        roleUnsub();
+        roleUnsub = null;
+      }
+
+      if (user) {
+        // Listen to Firestore role in real-time
+        roleUnsub = onSnapshot(doc(db, 'users', user.uid), (snap) => {
+          const role = snap.exists() ? (snap.data()?.role ?? null) : null;
+          setUserRole(role);
+          setLoading(false);
+        });
+      } else {
+        setUserRole(null);
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      authUnsub();
+      if (roleUnsub) roleUnsub();
+    };
+  }, []);
+
+  const isAdmin = userRole === 'admin';
 
   return (
-    <AuthContext.Provider value={{ user, loading, isAdmin }}>
+    <AuthContext.Provider value={{ currentUser, loading, isAdmin, userRole }}>
       {children}
     </AuthContext.Provider>
-  )
-}
+  );
+};
 
 export const useAuth = () => {
-  const context = useContext(AuthContext)
-  if (!context) {
-    throw new Error('useAuth must be used inside AuthProvider')
-  }
-  return context
-}
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
+  return ctx;
+};

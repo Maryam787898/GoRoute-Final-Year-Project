@@ -1,246 +1,329 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from 'react';
 import {
   collection,
   onSnapshot,
   query,
-  orderBy,
-  limit,
-  Timestamp
-} from "firebase/firestore";
-import { onAuthStateChanged, User } from "firebase/auth";
-import { db, auth } from "../firebase";
-import { 
-  Users, 
-  UserCheck, 
-  UserMinus, 
-  Clock, 
-  ShieldCheck, 
+  where,
+  Timestamp,
+} from 'firebase/firestore';
+import { db, auth } from '../firebase';
+import {
+  Users,
+  UserCheck,
+  Route as RouteIcon,
+  ShieldCheck,
   Mail,
-  Circle
-} from "lucide-react";
+  Circle,
+  Bus,
+  Activity,
+} from 'lucide-react';
 
 interface UserProfile {
   uid: string;
   name: string;
   email: string;
-  role: 'passenger' | 'driver';
+  role: 'passenger' | 'driver' | 'admin';
   isOnline: boolean;
+  isActive: boolean;
   createdAt: Timestamp;
   lastLogin?: Timestamp;
 }
 
+// ── Stat card ─────────────────────────────────────────────────────────────────
+
+const StatCard = ({
+  icon: Icon,
+  label,
+  value,
+  color,
+  pulse = false,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: number | string;
+  color: string;
+  pulse?: boolean;
+}) => (
+  <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-5">
+    <div className={`h-14 w-14 ${color} rounded-2xl flex items-center justify-center shrink-0`}>
+      <Icon size={26} />
+    </div>
+    <div className="min-w-0">
+      <p className="text-sm font-medium text-gray-500 truncate">{label}</p>
+      <div className="flex items-center gap-2 mt-0.5">
+        <p className="text-2xl font-bold text-gray-900">{value}</p>
+        {pulse && (
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
+          </span>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+// ── Active users section ──────────────────────────────────────────────────────
+
+const ActiveUsersSection = ({
+  title,
+  users,
+  emptyMsg,
+  avatarColor,
+}: {
+  title: string;
+  users: UserProfile[];
+  emptyMsg: string;
+  avatarColor: string;
+}) => (
+  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+    <div className="px-6 py-4 border-b border-gray-50 flex items-center justify-between">
+      <h3 className="font-semibold text-gray-900">{title}</h3>
+      <span className="text-xs font-semibold text-green-600 bg-green-50 px-2.5 py-1 rounded-full">
+        {users.length} online
+      </span>
+    </div>
+    {users.length === 0 ? (
+      <div className="py-10 text-center text-gray-400 text-sm">{emptyMsg}</div>
+    ) : (
+      <ul className="divide-y divide-gray-50">
+        {users.map((u) => (
+          <li key={u.uid} className="px-6 py-3 flex items-center gap-3">
+            <div className={`h-8 w-8 rounded-full ${avatarColor} flex items-center justify-center font-bold text-sm shrink-0`}>
+              {u.name?.charAt(0).toUpperCase() ?? '?'}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-gray-900 truncate">{u.name}</p>
+              <p className="text-xs text-gray-400 truncate">{u.email}</p>
+            </div>
+            <span className="flex items-center gap-1 text-xs text-green-600 font-semibold shrink-0">
+              <Circle size={7} fill="currentColor" />
+              Online
+            </span>
+          </li>
+        ))}
+      </ul>
+    )}
+  </div>
+);
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
+
 const Dashboard: React.FC = () => {
-  const [admin, setAdmin] = useState<User | null>(null);
-  const [recentUsers, setRecentUsers] = useState<UserProfile[]>([]);
+  const admin = auth.currentUser;
+
   const [counts, setCounts] = useState({
     passengers: 0,
     drivers: 0,
-    online: 0
+    onlineDrivers: 0,
+    onlinePassengers: 0,
+    activeRoutes: 0,
   });
+
+  const [activeDrivers, setActiveDrivers] = useState<UserProfile[]>([]);
+  const [activePassengers, setActivePassengers] = useState<UserProfile[]>([]);
+  const [recentUsers, setRecentUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, (user) => {
-      setAdmin(user);
-    });
+    // ── All users stream ──────────────────────────────────────────────
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+      const all = snap.docs.map((d) => ({ uid: d.id, ...d.data() } as UserProfile));
 
-    // Listen to ALL users to calculate counts
-    const unsubFirestore = onSnapshot(collection(db, "users"), (snapshot) => {
-      const usersData = snapshot.docs.map(doc => ({
-        ...doc.data()
-      } as UserProfile));
+      const passengers = all.filter((u) => u.role === 'passenger');
+      const drivers = all.filter((u) => u.role === 'driver');
+      const onlineDrivers = drivers.filter((u) => u.isOnline);
+      const onlinePassengers = passengers.filter((u) => u.isOnline);
 
-      // Calculate counts
-      const pCount = usersData.filter(u => u.role === 'passenger').length;
-      const dCount = usersData.filter(u => u.role === 'driver').length;
-      const oCount = usersData.filter(u => u.isOnline).length;
+      setCounts((prev) => ({
+        ...prev,
+        passengers: passengers.length,
+        drivers: drivers.length,
+        onlineDrivers: onlineDrivers.length,
+        onlinePassengers: onlinePassengers.length,
+      }));
 
-      setCounts({
-        passengers: pCount,
-        drivers: dCount,
-        online: oCount
-      });
+      setActiveDrivers(onlineDrivers);
+      setActivePassengers(onlinePassengers);
 
-      // Sort manually for recent users to avoid index/missing field issues
-      const sorted = [...usersData].sort((a, b) => {
-        const timeA = a.createdAt?.seconds || 0;
-        const timeB = b.createdAt?.seconds || 0;
-        return timeB - timeA;
-      }).slice(0, 10);
-
+      // Recent users table — exclude admins, sort by createdAt desc
+      const sorted = all
+        .filter((u) => u.role !== 'admin')
+        .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0))
+        .slice(0, 10);
       setRecentUsers(sorted);
       setLoading(false);
-    }, (error) => {
-      console.error("Firestore error:", error);
-      setLoading(false);
     });
 
+    // ── Active routes stream ──────────────────────────────────────────
+    const unsubRoutes = onSnapshot(
+      query(collection(db, 'routes'), where('isActive', '==', true)),
+      (snap) => setCounts((prev) => ({ ...prev, activeRoutes: snap.size }))
+    );
+
     return () => {
-      unsubAuth();
-      unsubFirestore();
+      unsubUsers();
+      unsubRoutes();
     };
   }, []);
 
-  const getInitials = (name: string) => {
-    return name.charAt(0).toUpperCase();
-  };
-
-  const formatDate = (timestamp: Timestamp) => {
-    if (!timestamp) return 'N/A';
-    const date = timestamp.toDate();
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Admin Dashboard</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">Monitor real-time user activity and system status.</p>
+          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Real-time system overview</p>
         </div>
-        
-        {/* Admin Profile Card */}
+
         {admin && (
-          <div className="flex items-center gap-4 bg-white dark:bg-gray-800 p-3 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <div className="h-12 w-12 rounded-full bg-primary text-white flex items-center justify-center text-xl font-bold shadow-sm">
-              {getInitials(admin.displayName || admin.email || 'A')}
+          <div className="flex items-center gap-3 bg-white border border-gray-100 shadow-sm rounded-2xl px-4 py-2.5">
+            <div className="h-9 w-9 rounded-full bg-[#800000] text-white flex items-center justify-center font-bold text-sm">
+              {(admin.displayName ?? admin.email ?? 'A').charAt(0).toUpperCase()}
             </div>
             <div>
               <div className="flex items-center gap-1">
-                <p className="text-sm font-bold text-gray-900 dark:text-white leading-none">
-                  {admin.displayName || 'Admin'}
+                <p className="text-sm font-bold text-gray-900 leading-none">
+                  {admin.displayName ?? 'Admin'}
                 </p>
-                <ShieldCheck className="h-3 w-3 text-primary" />
+                <ShieldCheck className="h-3.5 w-3.5 text-[#800000]" />
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{admin.email}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{admin.email}</p>
             </div>
           </div>
         )}
       </div>
 
-      {/* Stats Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5">
-          <div className="h-14 w-14 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-2xl flex items-center justify-center">
-            <Users size={28} />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Total Passengers</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-white">{counts.passengers}</p>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5">
-          <div className="h-14 w-14 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 rounded-2xl flex items-center justify-center">
-            <ShieldCheck size={28} />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Total Drivers</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-white">{counts.drivers}</p>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5">
-          <div className="h-14 w-14 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-2xl flex items-center justify-center">
-            <UserCheck size={28} />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Online Now</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-white">
-              {counts.online}
-            </p>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5">
-          <div className="h-14 w-14 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 rounded-2xl flex items-center justify-center">
-            <Clock size={28} />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Status</p>
-            <p className="text-2xl font-bold text-green-600 dark:text-green-400">Healthy</p>
-          </div>
-        </div>
+      {/* Stats grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard
+          icon={Users}
+          label="Total Passengers"
+          value={counts.passengers}
+          color="bg-blue-50 text-blue-600"
+        />
+        <StatCard
+          icon={Bus}
+          label="Total Drivers"
+          value={counts.drivers}
+          color="bg-purple-50 text-purple-600"
+        />
+        <StatCard
+          icon={Activity}
+          label="Drivers Online"
+          value={counts.onlineDrivers}
+          color="bg-green-50 text-green-600"
+          pulse={counts.onlineDrivers > 0}
+        />
+        <StatCard
+          icon={UserCheck}
+          label="Passengers Online"
+          value={counts.onlinePassengers}
+          color="bg-teal-50 text-teal-600"
+          pulse={counts.onlinePassengers > 0}
+        />
+        <StatCard
+          icon={RouteIcon}
+          label="Active Routes"
+          value={counts.activeRoutes}
+          color="bg-orange-50 text-orange-600"
+          pulse={counts.activeRoutes > 0}
+        />
       </div>
 
-      {/* Recent Users List */}
-      <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
-        <div className="p-6 border-b border-gray-50 dark:border-gray-700 flex items-center justify-between">
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white">Recent Users Sync</h2>
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+      {/* Active users — real-time */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <ActiveUsersSection
+          title="Active Drivers"
+          users={activeDrivers}
+          emptyMsg="No drivers online right now"
+          avatarColor="bg-purple-100 text-purple-700"
+        />
+        <ActiveUsersSection
+          title="Active Passengers"
+          users={activePassengers}
+          emptyMsg="No passengers online right now"
+          avatarColor="bg-blue-100 text-blue-700"
+        />
+      </div>
+
+      {/* Recent users table */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-50 flex items-center justify-between">
+          <h2 className="font-semibold text-gray-900">Recent Users</h2>
+          <span className="flex items-center gap-1.5 text-xs text-gray-400">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
             </span>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Live Sync</span>
-          </div>
+            Live
+          </span>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          <table className="w-full text-sm">
             <thead>
-              <tr className="bg-gray-50/50 dark:bg-gray-700/30 text-gray-500 dark:text-gray-400 text-xs font-bold uppercase tracking-wider">
-                <th className="px-6 py-4">User</th>
-                <th className="px-6 py-4">Role</th>
-                <th className="px-6 py-4">Status</th>
-                <th className="px-6 py-4">Created At</th>
+              <tr className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left">User</th>
+                <th className="px-6 py-3 text-left">Role</th>
+                <th className="px-6 py-3 text-left">Status</th>
+                <th className="px-6 py-3 text-left">Joined</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
-              {recentUsers.map((user) => (
-                <tr key={user.uid} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/20 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-4">
-                      <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shadow-sm group-hover:scale-110 transition-transform">
-                        {getInitials(user.name)}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-gray-900 dark:text-white">{user.name}</p>
-                        <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
-                          <Mail size={10} />
-                          <span>{user.email}</span>
+            <tbody className="divide-y divide-gray-50">
+              {loading ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-10 text-center text-gray-400">
+                    Loading…
+                  </td>
+                </tr>
+              ) : recentUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-10 text-center text-gray-400">
+                    No users yet
+                  </td>
+                </tr>
+              ) : (
+                recentUsers.map((user) => (
+                  <tr key={user.uid} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center font-bold text-sm">
+                          {user.name?.charAt(0).toUpperCase() ?? '?'}
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-900">{user.name}</p>
+                          <div className="flex items-center gap-1 text-xs text-gray-400">
+                            <Mail size={10} />
+                            <span>{user.email}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-tighter ${
-                      user.role === 'driver' 
-                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' 
-                        : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                    }`}>
-                      {user.role}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    {user.isOnline ? (
-                      <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400">
-                        <Circle size={8} fill="currentColor" />
-                        <span className="text-xs font-bold uppercase tracking-tight">Online</span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full uppercase ${
+                        user.role === 'driver'
+                          ? 'bg-purple-100 text-purple-700'
+                          : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {user.role}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className={`flex items-center gap-1.5 text-xs font-semibold ${
+                        user.isOnline ? 'text-green-600' : 'text-gray-400'
+                      }`}>
+                        <Circle size={7} fill="currentColor" />
+                        {user.isOnline ? 'Online' : 'Offline'}
                       </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5 text-gray-400 dark:text-gray-500">
-                        <Circle size={8} fill="currentColor" />
-                        <span className="text-xs font-bold uppercase tracking-tight">Offline</span>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                      {user.createdAt ? new Date(user.createdAt.seconds * 1000).toLocaleString() : 'Just now'}
-                    </p>
-                  </td>
-                </tr>
-              ))}
-              
-              {recentUsers.length === 0 && !loading && (
-                <tr>
-                  <td colSpan={4} className="px-6 py-12 text-center">
-                    <UserMinus className="mx-auto h-12 w-12 text-gray-300 mb-3" />
-                    <p className="text-gray-500 dark:text-gray-400 font-medium">No users found in Firestore</p>
-                  </td>
-                </tr>
+                    </td>
+                    <td className="px-6 py-4 text-xs text-gray-400">
+                      {user.createdAt
+                        ? new Date(user.createdAt.seconds * 1000).toLocaleDateString()
+                        : '—'}
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>

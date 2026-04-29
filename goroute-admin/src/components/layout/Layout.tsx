@@ -5,17 +5,17 @@ import Sidebar from './Sidebar';
 import { Loader2 } from 'lucide-react';
 
 const Layout = () => {
-  const { user, loading, isAdmin } = useAuth();
+  const { currentUser, loading, isAdmin } = useAuth();
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <Loader2 className="animate-spin h-10 w-10 text-primary" />
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Loader2 className="animate-spin h-10 w-10 text-[#800000]" />
       </div>
     );
   }
 
-  if (!user || !isAdmin) {
+  if (!currentUser || !isAdmin) {
     return <Navigate to="/login" replace />;
   }
 

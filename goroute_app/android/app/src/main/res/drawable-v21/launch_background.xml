@@ -1,12 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
+<!--
+  Native splash screen for API 21+ (Android 5+).
+  Uses the same brand color and centered icon as the base drawable.
+-->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
+    <!-- Brand background color -->
+    <item>
+        <color android:color="#8B0000"/>
+    </item>
+
+    <!-- App icon centered -->
+    <item>
         <bitmap
             android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+            android:src="@mipmap/ic_launcher"/>
+    </item>
+
 </layer-list>

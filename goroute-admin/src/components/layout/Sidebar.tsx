@@ -9,7 +9,9 @@ import {
   UserSquare2, 
   Bell, 
   LogOut, 
-  Bus
+  Bus,
+  MessageSquare,
+  AlertTriangle,
 } from 'lucide-react';
 
 const Sidebar = () => {
@@ -26,6 +28,8 @@ const Sidebar = () => {
     { icon: RouteIcon, label: 'Routes', path: '/routes' },
     { icon: UserSquare2, label: 'Drivers', path: '/drivers' },
     { icon: Users, label: 'Users', path: '/users' },
+    { icon: AlertTriangle, label: 'Bus Alerts', path: '/bus-alerts' },
+    { icon: MessageSquare, label: 'Support', path: '/support' },
     { icon: Bell, label: 'Notifications', path: '/notifications' },
   ];
 

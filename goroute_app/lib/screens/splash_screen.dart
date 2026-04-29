@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+
+import 'package:goroute_app/screens/onboarding_screen.dart'
+    show kOnboardingComplete;
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -19,6 +24,14 @@ class _SplashScreenState extends State<SplashScreen>
   void initState() {
     super.initState();
 
+    // Status bar icons dark so they're visible on white background
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+      ),
+    );
+
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -36,9 +49,8 @@ class _SplashScreenState extends State<SplashScreen>
 
     _controller.forward();
 
-    Timer(const Duration(milliseconds: 2500), () {
-      Navigator.of(context).pushReplacementNamed('/role-selection');
-    });
+    // After 2.5 s, decide where to go
+    Timer(const Duration(milliseconds: 2500), _navigate);
   }
 
   @override
@@ -47,12 +59,25 @@ class _SplashScreenState extends State<SplashScreen>
     super.dispose();
   }
 
+  /// Route to onboarding on first launch, role-selection on subsequent ones.
+  Future<void> _navigate() async {
+    if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    final done = prefs.getBool(kOnboardingComplete) ?? false;
+
+    if (!mounted) return;
+    Navigator.of(
+      context,
+    ).pushReplacementNamed(done ? '/role-selection' : '/onboarding');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       body: Stack(
         children: [
+          // ── Centered logo + wordmark ─────────────────────────────────────
           Center(
             child: AnimatedBuilder(
               animation: _controller,
@@ -64,11 +89,10 @@ class _SplashScreenState extends State<SplashScreen>
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        
-                        // ✅ ONLY LOGO (NO ICON)
-                        Image.asset(
-                          'Images/logo.jpeg',
-                          height: 140,
+                        // App logo from Images folder
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(24),
+                          child: Image.asset('Images/logo.jpeg', height: 140),
                         ),
 
                         const SizedBox(height: 24),
@@ -99,6 +123,7 @@ class _SplashScreenState extends State<SplashScreen>
             ),
           ),
 
+          // ── Loading bar at the bottom ────────────────────────────────────
           Positioned(
             bottom: 100,
             left: 64,
@@ -110,7 +135,7 @@ class _SplashScreenState extends State<SplashScreen>
                 return Container(
                   height: 6,
                   decoration: BoxDecoration(
-                    color: Colors.grey[200],
+                    color: const Color(0xFFE5E7EB),
                     borderRadius: BorderRadius.circular(3),
                   ),
                   child: FractionallySizedBox(
