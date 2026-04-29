@@ -184,6 +184,9 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
   DriverLocationModel? _driverLoc;
   StreamSubscription<DocumentSnapshot>? _driverSub;
 
+  // Cached AI ETA result
+  int? _cachedEtaMinutes;
+
   @override
   void initState() {
     super.initState();
@@ -195,7 +198,18 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
           // Skip placeholder (0,0)
           if (data.lat == 0.0 && data.lng == 0.0) return;
           setState(() => _driverLoc = data);
+          // Refresh AI ETA whenever driver location updates
+          _refreshEta();
         });
+  }
+
+  @override
+  void didUpdateWidget(_ActiveRouteCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Refresh ETA when passenger location changes
+    if (oldWidget.passengerLatLng != widget.passengerLatLng) {
+      _refreshEta();
+    }
   }
 
   @override
@@ -204,7 +218,20 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
     super.dispose();
   }
 
-  // ── Distance + ETA ────────────────────────────────────────────────────
+  // ── AI ETA refresh ────────────────────────────────────────────────────
+
+  Future<void> _refreshEta() async {
+    if (widget.passengerLatLng == null || _driverLoc == null) return;
+    final speed = _driverLoc!.speed > 5 ? _driverLoc!.speed : 30.0;
+    final eta = await ETAService.calculateETASmart(
+      widget.passengerLatLng!,
+      LatLng(_driverLoc!.lat, _driverLoc!.lng),
+      currentDriverSpeed: speed,
+    );
+    if (mounted) setState(() => _cachedEtaMinutes = eta);
+  }
+
+  // ── Distance + ETA display ────────────────────────────────────────────
 
   String get _distanceLabel {
     if (widget.passengerLatLng == null || _driverLoc == null) return '';
@@ -219,15 +246,18 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
   }
 
   String get _etaLabel {
-    if (widget.passengerLatLng == null || _driverLoc == null) return '';
-    final speed = _driverLoc!.speed > 5 ? _driverLoc!.speed : 30.0;
-    final eta = ETAService.calculateETA(
-      widget.passengerLatLng!,
-      LatLng(_driverLoc!.lat, _driverLoc!.lng),
-      averageSpeedKmH: speed,
-    );
-    if (eta <= 0) return 'Arrived';
-    return '$eta min';
+    if (_cachedEtaMinutes == null) {
+      // Show sync fallback while async result is loading
+      if (widget.passengerLatLng == null || _driverLoc == null) return '';
+      final speed = _driverLoc!.speed > 5 ? _driverLoc!.speed : 30.0;
+      final eta = ETAService.calculateETA(
+        widget.passengerLatLng!,
+        LatLng(_driverLoc!.lat, _driverLoc!.lng),
+        averageSpeedKmH: speed,
+      );
+      return ETAService.formatEtaMinutes(eta);
+    }
+    return ETAService.formatEtaMinutes(_cachedEtaMinutes!);
   }
 
   Future<void> _saveRoute() async {

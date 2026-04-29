@@ -4,6 +4,7 @@ import {
   onSnapshot,
   addDoc,
   updateDoc,
+  deleteDoc,
   doc,
   query,
   orderBy,
@@ -13,7 +14,7 @@ import {
 import { db, auth } from '../firebase';
 import {
   MessageSquare, Send, CheckCircle, Clock,
-  ChevronLeft, Loader2, User, Shield,
+  ChevronLeft, Loader2, User, Shield, Trash2,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -73,7 +74,8 @@ const roleConfig = {
 const ChatPanel: React.FC<{
   request: SupportRequest;
   onBack: () => void;
-}> = ({ request, onBack }) => {
+  onDelete: (id: string) => void;
+}> = ({ request, onBack, onDelete }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -174,6 +176,14 @@ const ChatPanel: React.FC<{
             Resolve
           </button>
         )}
+        <button
+          onClick={() => onDelete(request.id)}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 rounded-xl text-xs font-semibold hover:bg-red-100 transition-colors"
+          title="Delete request"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete
+        </button>
       </div>
 
       {/* Original message */}
@@ -262,6 +272,8 @@ const SupportRequests: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<SupportRequest | null>(null);
   const [filter, setFilter] = useState<'all' | 'pending' | 'open' | 'resolved'>('all');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -276,6 +288,23 @@ const SupportRequests: React.FC = () => {
     );
     return unsub;
   }, []);
+
+  const handleDeleteRequest = (id: string) => {
+    setConfirmDeleteId(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!confirmDeleteId) return;
+    setDeleting(true);
+    try {
+      await deleteDoc(doc(db, 'support_requests', confirmDeleteId));
+      // If the deleted request was open in the chat panel, go back to list
+      if (selected?.id === confirmDeleteId) setSelected(null);
+    } finally {
+      setDeleting(false);
+      setConfirmDeleteId(null);
+    }
+  };
 
   const filtered = filter === 'all'
     ? requests
@@ -292,13 +321,56 @@ const SupportRequests: React.FC = () => {
     return (
       <div className="h-full bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden"
            style={{ height: 'calc(100vh - 120px)' }}>
-        <ChatPanel request={selected} onBack={() => setSelected(null)} />
+        <ChatPanel
+          request={selected}
+          onBack={() => setSelected(null)}
+          onDelete={handleDeleteRequest}
+        />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      {/* Confirm delete dialog */}
+      {confirmDeleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 rounded-full bg-red-50 flex items-center justify-center shrink-0">
+                <Trash2 className="h-5 w-5 text-red-500" />
+              </div>
+              <h3 className="font-bold text-gray-900 text-lg">Delete Request</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-6">
+              This will permanently delete the support request and all its messages. This cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                disabled={deleting}
+                className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+              >
+                {deleting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Support Requests</h1>
@@ -363,14 +435,19 @@ const SupportRequests: React.FC = () => {
               return (
                 <li
                   key={req.id}
-                  onClick={() => setSelected(req)}
-                  className="px-6 py-4 hover:bg-gray-50/50 cursor-pointer transition-colors"
+                  className="px-6 py-4 hover:bg-gray-50/50 transition-colors"
                 >
                   <div className="flex items-start gap-4">
-                    <div className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center shrink-0 font-bold text-gray-600">
+                    <div
+                      className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center shrink-0 font-bold text-gray-600 cursor-pointer"
+                      onClick={() => setSelected(req)}
+                    >
                       {req.senderName?.charAt(0).toUpperCase() ?? '?'}
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div
+                      className="flex-1 min-w-0 cursor-pointer"
+                      onClick={() => setSelected(req)}
+                    >
                       <div className="flex items-center gap-2 flex-wrap mb-1">
                         <p className="font-semibold text-gray-900 text-sm truncate">
                           {req.subject}
@@ -390,9 +467,30 @@ const SupportRequests: React.FC = () => {
                         {req.message}
                       </p>
                     </div>
-                    <div className="text-right shrink-0">
+                    <div className="flex flex-col items-end gap-2 shrink-0">
                       <p className="text-xs text-gray-400">{timeAgo(req.createdAt)}</p>
-                      <MessageSquare className="h-4 w-4 text-gray-300 mt-2 ml-auto" />
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelected(req);
+                          }}
+                          className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                          title="Open chat"
+                        >
+                          <MessageSquare className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteRequest(req.id);
+                          }}
+                          className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                          title="Delete request"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </li>

@@ -127,7 +127,7 @@ class _BusTrackingScreenState extends State<BusTrackingScreen>
           _driverOffline = false;
         });
         if (!isPlaceholder) {
-          _recalculate();
+          unawaited(_recalculate());
           if (_followBus) _moveMapToBus();
         }
       }
@@ -149,7 +149,7 @@ class _BusTrackingScreenState extends State<BusTrackingScreen>
     );
     if (mounted) {
       setState(() => _passengerLatLng = LatLng(pos.latitude, pos.longitude));
-      _recalculate();
+      unawaited(_recalculate());
     }
 
     // Then stream updates every 15 m
@@ -161,34 +161,39 @@ class _BusTrackingScreenState extends State<BusTrackingScreen>
     ).listen((pos) {
       if (mounted) {
         setState(() => _passengerLatLng = LatLng(pos.latitude, pos.longitude));
-        _recalculate();
+        unawaited(_recalculate());
       }
     });
   }
 
   // ── Distance + ETA calculation ───────────────────────────────────────────
 
-  void _recalculate() {
+  Future<void> _recalculate() async {
     if (_passengerLatLng == null || _driverData == null) return;
 
     final driverLatLng = LatLng(_driverData!.lat, _driverData!.lng);
+
+    // Straight-line distance (always available, used for proximity alerts)
     final dist = ETAService.calculateDistanceKm(
       _passengerLatLng!,
       driverLatLng,
     );
 
-    // Use live driver speed if available (min 5 km/h to avoid divide-by-zero)
+    // AI/traffic-aware ETA — uses Google Directions API if key is set,
+    // falls back to Haversine + driver speed automatically
     final speed = _driverData!.speed > 5 ? _driverData!.speed : 30.0;
-    final eta = ETAService.calculateETA(
+    final eta = await ETAService.calculateETASmart(
       _passengerLatLng!,
       driverLatLng,
-      averageSpeedKmH: speed,
+      currentDriverSpeed: speed,
     );
 
-    setState(() {
-      _distanceKm = dist;
-      _etaMinutes = eta;
-    });
+    if (mounted) {
+      setState(() {
+        _distanceKm = dist;
+        _etaMinutes = eta;
+      });
+    }
 
     _checkProximityAlerts(dist);
   }

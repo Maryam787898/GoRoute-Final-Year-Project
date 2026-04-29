@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:goroute_app/screens/shared/my_support_requests_screen.dart';
 
 // ── App-wide constants ────────────────────────────────────────────────────────
 
@@ -55,32 +54,6 @@ class PassengerHelpSupportScreen extends StatelessWidget {
                 subtitle: _kSupportPhone,
                 subtitleColor: Colors.green.shade700,
                 onTap: () => _openDialer(context),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-
-          // ── My support requests ──────────────────────────────────────
-          _SectionCard(
-            icon: Icons.inbox_outlined,
-            iconColor: Colors.indigo,
-            title: 'My Support Requests',
-            children: [
-              _ActionTile(
-                icon: Icons.chat_bubble_outline,
-                iconBg: Colors.indigo.withValues(alpha: 0.1),
-                iconColor: Colors.indigo,
-                title: 'View My Requests',
-                subtitle: 'Track status & chat with admin',
-                subtitleColor: Colors.indigo,
-                onTap:
-                    () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const MySupportRequestsScreen(),
-                      ),
-                    ),
               ),
             ],
           ),
