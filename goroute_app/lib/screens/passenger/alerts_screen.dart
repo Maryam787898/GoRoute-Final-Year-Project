@@ -1,97 +1,10 @@
 import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_fonts/google_fonts.dart';
 
-// ── Alert type config ─────────────────────────────────────────────────────────
-
-class _AlertConfig {
-  final IconData icon;
-  final Color color;
-  final String label;
-  const _AlertConfig(this.icon, this.color, this.label);
-}
-
-const _alertTypes = <String, _AlertConfig>{
-  'delay': _AlertConfig(Icons.schedule, Colors.red, 'Delay'),
-  'start': _AlertConfig(Icons.play_circle, Colors.green, 'Started'),
-  'arrival': _AlertConfig(Icons.location_on, Colors.blue, 'Arrival'),
-  'emergency': _AlertConfig(
-    Icons.warning_amber_rounded,
-    Colors.deepOrange,
-    'Emergency',
-  ),
-  'warning': _AlertConfig(
-    Icons.warning_amber_rounded,
-    Colors.orange,
-    'Warning',
-  ),
-  'success': _AlertConfig(Icons.check_circle, Colors.green, 'Success'),
-  'error': _AlertConfig(Icons.error, Colors.red, 'Error'),
-  'info': _AlertConfig(Icons.info, Colors.blue, 'Info'),
-  'bus_delay': _AlertConfig(Icons.schedule, Colors.red, 'Delay'),
-  'bus_start': _AlertConfig(Icons.play_circle, Colors.green, 'Started'),
-  'bus_arrival': _AlertConfig(Icons.location_on, Colors.blue, 'Arrival'),
-  'bus_emergency': _AlertConfig(
-    Icons.warning_amber_rounded,
-    Colors.deepOrange,
-    'Emergency',
-  ),
-  'driver_support': _AlertConfig(Icons.support_agent, Colors.purple, 'Support'),
-  'passenger_feedback': _AlertConfig(Icons.feedback, Colors.indigo, 'Feedback'),
-  'admin_reply': _AlertConfig(Icons.reply, Colors.teal, 'Reply'),
-  'driver_added': _AlertConfig(Icons.person_add, Colors.purple, 'Driver'),
-};
-
-_AlertConfig _cfgFor(String type) =>
-    _alertTypes[type.toLowerCase()] ??
-    const _AlertConfig(Icons.notifications, Colors.blueGrey, 'Alert');
-
-// ── Alert model ───────────────────────────────────────────────────────────────
-
-class _Alert {
-  final String id;
-  final String title;
-  final String message;
-  final String type;
-  final String? busId;
-  final DateTime? time;
-  final bool isUnread;
-  final DocumentReference ref;
-
-  const _Alert({
-    required this.id,
-    required this.title,
-    required this.message,
-    required this.type,
-    this.busId,
-    this.time,
-    required this.isUnread,
-    required this.ref,
-  });
-
-  factory _Alert.fromDoc(DocumentSnapshot doc) {
-    final d = doc.data() as Map<String, dynamic>;
-    final ts = d['timestamp'] ?? d['createdAt'];
-    DateTime? time;
-    if (ts != null) {
-      try {
-        time = (ts as Timestamp).toDate();
-      } catch (_) {}
-    }
-    return _Alert(
-      id: doc.id,
-      title: d['title'] as String? ?? 'Alert',
-      message: d['message'] as String? ?? '',
-      type: d['type'] as String? ?? 'info',
-      busId: d['busId'] as String?,
-      time: time,
-      isUnread: d['readStatus'] != true,
-      ref: doc.reference,
-    );
-  }
-}
-
-// ── Screen ────────────────────────────────────────────────────────────────────
+import 'package:goroute_app/models/notification_model.dart';
+import 'package:goroute_app/services/eta_alert_service.dart';
 
 class AlertsScreen extends StatefulWidget {
   const AlertsScreen({super.key});
@@ -101,100 +14,316 @@ class AlertsScreen extends StatefulWidget {
 }
 
 class _AlertsScreenState extends State<AlertsScreen> {
-  final _db = FirebaseFirestore.instance;
-  StreamSubscription? _sub;
-  List<_Alert> _alerts = [];
+  final String? _uid = FirebaseAuth.instance.currentUser?.uid;
+
+  List<NotificationModel> _all = [];
   bool _loading = true;
+  StreamSubscription? _personalSub;
+  final Map<String, NotificationModel> _map = {};
 
   @override
   void initState() {
     super.initState();
-    _subscribe();
-  }
-
-  void _subscribe() {
-    // Read ONLY from bus_alerts — single source of truth.
-    // BusAlerts.tsx writes here; no duplicates.
-    _sub = _db
-        .collection('bus_alerts')
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .listen(
-          (snap) {
-            if (!mounted) return;
-            setState(() {
-              _alerts = snap.docs.map((d) => _Alert.fromDoc(d)).toList();
-              _loading = false;
-            });
-          },
-          onError: (e) {
-            if (mounted) setState(() => _loading = false);
-          },
-        );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _subscribe();
+    });
   }
 
   @override
   void dispose() {
-    _sub?.cancel();
+    _personalSub?.cancel();
     super.dispose();
   }
 
+  // ── Subscriptions ─────────────────────────────────────────────────────────
+
+  void _subscribe() {
+    // Only source: per-passenger notifications subcollection
+    if (_uid == null) {
+      setState(() => _loading = false);
+      return;
+    }
+    _personalSub = EtaAlertService.notificationsStream(_uid).listen((snap) {
+      _map.clear();
+      for (final doc in snap.docs) {
+        _map[doc.id] = NotificationModel.fromDoc(doc);
+      }
+      _rebuild();
+    });
+  }
+
+  void _rebuild() {
+    if (!mounted) return;
+    final sorted =
+        _map.values.toList()..sort((a, b) {
+          final at = a.time ?? DateTime(0);
+          final bt = b.time ?? DateTime(0);
+          return bt.compareTo(at);
+        });
+    setState(() {
+      _all = sorted;
+      _loading = false;
+    });
+  }
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  int get _unreadCount => _all.where((n) => !n.isRead).length;
+
+  Future<void> _markAllRead() async {
+    if (_uid == null) return;
+    await EtaAlertService.markAllRead(_uid);
+    setState(() {
+      for (final key in _map.keys.toList()) {
+        final n = _map[key];
+        if (n != null && !n.isRead) {
+          _map[key] = NotificationModel(
+            id: n.id,
+            title: n.title,
+            message: n.message,
+            type: n.type,
+            busId: n.busId,
+            driverName: n.driverName,
+            routeLabel: n.routeLabel,
+            time: n.time,
+            isRead: true,
+            ref: n.ref,
+          );
+        }
+      }
+      _rebuild();
+    });
+  }
+
+  Future<void> _clearAll() async {
+    final ok = await _confirm(
+      title: 'Clear All Notifications',
+      message: 'This will permanently delete all your notifications.',
+      confirmLabel: 'Clear All',
+      confirmColor: Colors.red,
+    );
+    if (!ok) return;
+    if (_uid != null) await EtaAlertService.clearAll(_uid);
+    // Clear local map completely so the list empties immediately
+    setState(() {
+      _map.clear();
+      _all = [];
+    });
+  }
+
+  Future<void> _deleteOne(NotificationModel n, String mapKey) async {
+    if (_uid != null) await EtaAlertService.delete(_uid, n.id);
+    setState(() {
+      _map.remove(mapKey);
+      _rebuild();
+    });
+  }
+
+  Future<void> _markOneRead(NotificationModel n, String mapKey) async {
+    if (_uid != null) await EtaAlertService.markRead(_uid, n.id);
+    n.ref.update({'readStatus': true}).catchError((_) {});
+  }
+
+  Future<bool> _confirm({
+    required String title,
+    required String message,
+    required String confirmLabel,
+    required Color confirmColor,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: Text(
+              title,
+              style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
+            ),
+            content: Text(message, style: GoogleFonts.poppins(fontSize: 14)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('Cancel', style: GoogleFonts.poppins()),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: confirmColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text(confirmLabel, style: GoogleFonts.poppins()),
+              ),
+            ],
+          ),
+    );
+    return result ?? false;
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
+    final unread = _unreadCount;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        title: const Text('Alerts & Notifications'),
         backgroundColor: const Color(0xFF8B0000),
         foregroundColor: Colors.white,
         elevation: 0,
         automaticallyImplyLeading: false,
+        title: Row(
+          children: [
+            Text(
+              'Notifications',
+              style: GoogleFonts.poppins(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: Colors.white,
+              ),
+            ),
+            if (unread > 0) ...[
+              const SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '$unread',
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFF8B0000),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          if (unread > 0)
+            IconButton(
+              icon: const Icon(Icons.done_all, color: Colors.white),
+              tooltip: 'Mark all as read',
+              onPressed: _markAllRead,
+            ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            onSelected: (v) {
+              if (v == 'clear') _clearAll();
+            },
+            itemBuilder:
+                (_) => [
+                  PopupMenuItem(
+                    value: 'clear',
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.delete_sweep,
+                          color: Colors.red,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Clear all',
+                          style: GoogleFonts.poppins(color: Colors.red),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+          ),
+        ],
       ),
       body:
           _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _alerts.isEmpty
+              ? const Center(
+                child: CircularProgressIndicator(color: Color(0xFF8B0000)),
+              )
+              : _all.isEmpty
               ? _emptyState()
-              : ListView.builder(
-                padding: const EdgeInsets.all(12),
-                itemCount: _alerts.length,
-                itemBuilder: (context, i) {
-                  final alert = _alerts[i];
-                  return _AlertCard(
-                    alert: alert,
-                    onTap: () {
-                      alert.ref.update({'readStatus': true}).catchError((_) {});
-                      _showDetail(context, alert);
-                    },
-                  );
-                },
+              : RefreshIndicator(
+                color: const Color(0xFF8B0000),
+                onRefresh:
+                    () async =>
+                        Future.delayed(const Duration(milliseconds: 600)),
+                child: ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                  itemCount: _all.length,
+                  itemBuilder: (context, i) {
+                    final notif = _all[i];
+                    final mapKey =
+                        _map.entries
+                            .firstWhere(
+                              (e) => e.value.id == notif.id,
+                              orElse: () => MapEntry(notif.id, notif),
+                            )
+                            .key;
+
+                    return _NotifCard(
+                      notification: notif,
+                      onTap: () {
+                        _markOneRead(notif, mapKey);
+                        _showDetail(notif);
+                      },
+                      onDismissed: () => _deleteOne(notif, mapKey),
+                    );
+                  },
+                ),
               ),
     );
   }
 
+  // ── Empty state ───────────────────────────────────────────────────────────
+
   Widget _emptyState() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.notifications_none, size: 72, color: Colors.grey.shade300),
-          const SizedBox(height: 16),
-          Text(
-            'No alerts right now',
-            style: TextStyle(fontSize: 17, color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Alerts sent by admin will appear here',
-            style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.notifications_none,
+              size: 80,
+              color: Colors.grey.shade300,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No notifications yet',
+              style: GoogleFonts.poppins(
+                fontSize: 17,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Alerts will appear here when your bus is nearby.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                color: Colors.grey.shade400,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  void _showDetail(BuildContext context, _Alert alert) {
-    final cfg = _cfgFor(alert.type);
+  // ── Detail dialog ─────────────────────────────────────────────────────────
+
+  void _showDetail(NotificationModel n) {
     showDialog(
       context: context,
       builder:
@@ -202,51 +331,100 @@ class _AlertsScreenState extends State<AlertsScreen> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
             ),
-            child: Padding(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    width: 60,
-                    height: 60,
+                    width: 64,
+                    height: 64,
                     decoration: BoxDecoration(
-                      color: cfg.color.withValues(alpha: 0.12),
+                      color: n.color.withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(cfg.icon, color: cfg.color, size: 28),
+                    child: Icon(n.icon, color: n.color, size: 30),
                   ),
                   const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: n.color.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      n.categoryLabel.toUpperCase(),
+                      style: GoogleFonts.poppins(
+                        color: n.color,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   Text(
-                    alert.title,
+                    n.title,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: GoogleFonts.poppins(
                       fontWeight: FontWeight.bold,
-                      fontSize: 18,
+                      fontSize: 17,
                     ),
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    alert.message,
+                    n.message,
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      color: Colors.grey.shade700,
+                      height: 1.5,
+                    ),
                   ),
-                  if (alert.busId != null && alert.busId!.isNotEmpty) ...[
-                    const SizedBox(height: 12),
+                  if (n.driverName != null || n.routeLabel != null) ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        children: [
+                          if (n.driverName != null)
+                            _DetailRow(
+                              icon: Icons.person,
+                              label: 'Driver',
+                              value: n.driverName!,
+                            ),
+                          if (n.routeLabel != null)
+                            _DetailRow(
+                              icon: Icons.route,
+                              label: 'Route',
+                              value: n.routeLabel!,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (n.time != null) ...[
+                    const SizedBox(height: 10),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
-                          Icons.directions_bus,
-                          size: 16,
-                          color: Colors.grey.shade500,
+                          Icons.access_time,
+                          size: 13,
+                          color: Colors.grey.shade400,
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 4),
                         Text(
-                          'Bus: ${alert.busId}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade600,
+                          n.fullTimeLabel,
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
                           ),
                         ),
                       ],
@@ -258,16 +436,16 @@ class _AlertsScreenState extends State<AlertsScreen> {
                     child: ElevatedButton(
                       onPressed: () => Navigator.pop(ctx),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: cfg.color,
+                        backgroundColor: n.color,
                         foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      child: const Text(
-                        'OK',
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                      child: Text(
+                        'Got it',
+                        style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
@@ -279,155 +457,234 @@ class _AlertsScreenState extends State<AlertsScreen> {
   }
 }
 
-// ── Alert card ────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// _NotifCard
+// ─────────────────────────────────────────────────────────────────────────────
 
-class _AlertCard extends StatelessWidget {
-  final _Alert alert;
+class _NotifCard extends StatelessWidget {
+  final NotificationModel notification;
   final VoidCallback onTap;
+  final VoidCallback onDismissed;
 
-  const _AlertCard({required this.alert, required this.onTap});
+  const _NotifCard({
+    required this.notification,
+    required this.onTap,
+    required this.onDismissed,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final cfg = _cfgFor(alert.type);
-    final timeLabel = _timeAgo(alert.time);
+    final n = notification;
 
-    return Card(
-      elevation: alert.isUnread ? 3 : 1,
-      margin: const EdgeInsets.only(bottom: 10),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color:
-              alert.isUnread
-                  ? cfg.color.withValues(alpha: 0.5)
-                  : Colors.transparent,
-          width: alert.isUnread ? 1.5 : 0,
+    return Dismissible(
+      key: ValueKey(n.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: Colors.red.shade400,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.delete, color: Colors.white, size: 26),
+            SizedBox(height: 4),
+            Text(
+              'Delete',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
         ),
       ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Icon
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: cfg.color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
+      onDismissed: (_) => onDismissed(),
+      child: Card(
+        elevation: n.isRead ? 1 : 3,
+        margin: const EdgeInsets.only(bottom: 10),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color:
+                n.isRead ? Colors.transparent : n.color.withValues(alpha: 0.4),
+            width: n.isRead ? 0 : 1.5,
+          ),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Icon
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: n.color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: Icon(n.icon, color: n.color, size: 22),
                 ),
-                child: Icon(cfg.icon, color: cfg.color, size: 22),
-              ),
-              const SizedBox(width: 12),
+                const SizedBox(width: 12),
 
-              // Content
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            alert.title,
-                            style: TextStyle(
-                              fontWeight:
-                                  alert.isUnread
-                                      ? FontWeight.bold
-                                      : FontWeight.w600,
-                              fontSize: 14,
+                // Content
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Title + unread dot
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              n.title,
+                              style: GoogleFonts.poppins(
+                                fontWeight:
+                                    n.isRead
+                                        ? FontWeight.w500
+                                        : FontWeight.bold,
+                                fontSize: 13.5,
+                              ),
                             ),
                           ),
-                        ),
-                        if (alert.isUnread)
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: cfg.color,
-                              shape: BoxShape.circle,
+                          if (!n.isRead)
+                            Container(
+                              width: 9,
+                              height: 9,
+                              decoration: BoxDecoration(
+                                color: n.color,
+                                shape: BoxShape.circle,
+                              ),
                             ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      alert.message,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade600,
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        // Type badge
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: cfg.color.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            cfg.label,
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: cfg.color,
-                              fontWeight: FontWeight.bold,
+                      const SizedBox(height: 4),
+
+                      // Message
+                      Text(
+                        n.message,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(
+                          fontSize: 12.5,
+                          color: Colors.grey.shade600,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Footer: category badge + driver + time
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: n.color.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              n.categoryLabel,
+                              style: GoogleFonts.poppins(
+                                fontSize: 10,
+                                color: n.color,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
-                        ),
-                        if (alert.busId != null && alert.busId!.isNotEmpty) ...[
-                          const SizedBox(width: 8),
-                          Icon(
-                            Icons.directions_bus,
-                            size: 12,
-                            color: Colors.grey.shade400,
-                          ),
-                          const SizedBox(width: 3),
+                          if (n.driverName != null) ...[
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.person,
+                              size: 11,
+                              color: Colors.grey.shade400,
+                            ),
+                            const SizedBox(width: 2),
+                            Flexible(
+                              child: Text(
+                                n.driverName!,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 11,
+                                  color: Colors.grey.shade500,
+                                ),
+                              ),
+                            ),
+                          ],
+                          const Spacer(),
                           Text(
-                            alert.busId!,
-                            style: TextStyle(
+                            n.timeAgo,
+                            style: GoogleFonts.poppins(
                               fontSize: 11,
-                              color: Colors.grey.shade500,
+                              color: Colors.grey.shade400,
                             ),
                           ),
                         ],
-                        const Spacer(),
-                        Text(
-                          timeLabel,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey.shade400,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+}
 
-  String _timeAgo(DateTime? dt) {
-    if (dt == null) return '';
-    final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return '${diff.inDays}d ago';
+// ─────────────────────────────────────────────────────────────────────────────
+// _DetailRow
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DetailRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _DetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 15, color: Colors.grey.shade500),
+          const SizedBox(width: 6),
+          Text(
+            '$label: ',
+            style: GoogleFonts.poppins(
+              fontSize: 12,
+              color: Colors.grey.shade500,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

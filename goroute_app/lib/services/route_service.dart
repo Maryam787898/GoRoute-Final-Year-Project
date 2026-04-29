@@ -9,21 +9,24 @@ class RouteService {
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // ── Driver: add a new route (inactive by default) ─────────────────────
+  // ── Driver: add a new route ───────────────────────────────────────────
 
   Future<String> addRoute(RouteModel route) async {
     final ref = await _db.collection('routes').add(route.toMap());
     return ref.id;
   }
 
-  // ── Driver: toggle active/inactive ───────────────────────────────────
+  // ── Driver: activate a route ──────────────────────────────────────────
+  // Writes both isActive and routeStatus atomically.
 
   Future<void> setRouteActive(String routeId, bool isActive) async {
-    await _db.collection('routes').doc(routeId).update({'isActive': isActive});
+    await _db.collection('routes').doc(routeId).update({
+      'isActive': isActive,
+      'routeStatus': isActive ? 'active' : 'inactive',
+    });
   }
 
-  // ── Driver: stream of their own routes ───────────────────────────────
-  // No compound index needed — single-field where + client-side sort.
+  // ── Driver: stream of their own routes ────────────────────────────────
 
   Stream<QuerySnapshot> driverRoutesStream(String driverId) {
     return _db
@@ -33,13 +36,39 @@ class RouteService {
   }
 
   // ── Passenger: stream of ONLY active routes ───────────────────────────
-  // Single-field filter only — no composite index required.
+  // Queries directly on routeStatus == 'active' — the single source of truth.
+  // isActive is kept in sync but routeStatus is the authoritative field.
 
   Stream<QuerySnapshot> activeRoutesStream() {
     return _db
         .collection('routes')
-        .where('isActive', isEqualTo: true)
+        .where('routeStatus', isEqualTo: 'active')
         .snapshots();
+  }
+
+  // ── Driver: deactivate all routes for a driver ────────────────────────
+  // Called on stopTracking and on app startup to clean stale state.
+
+  Future<void> deactivateAllRoutesForDriver(String driverId) async {
+    try {
+      final snap =
+          await _db
+              .collection('routes')
+              .where('driverId', isEqualTo: driverId)
+              .where('routeStatus', isEqualTo: 'active')
+              .get();
+
+      if (snap.docs.isEmpty) return;
+
+      final batch = _db.batch();
+      for (final doc in snap.docs) {
+        batch.update(doc.reference, {
+          'isActive': false,
+          'routeStatus': 'inactive',
+        });
+      }
+      await batch.commit();
+    } catch (_) {}
   }
 
   // ── Delete a route ────────────────────────────────────────────────────

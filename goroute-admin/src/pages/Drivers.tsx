@@ -1,13 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
-  UserSquare2, Plus, Trash2, ToggleLeft, ToggleRight,
-  Loader2, X, Eye, EyeOff, AlertTriangle,
+  UserSquare2, Plus, Trash2,
+  Loader2, X, Eye, EyeOff, AlertTriangle, Activity,
 } from 'lucide-react';
 import {
   AppUser,
   subscribeDrivers,
   createDriver,
-  setDriverActive,
   deleteUserDoc,
 } from '../services/firestore';
 
@@ -85,7 +84,6 @@ const AddDriverModal = ({ onClose }: AddDriverModalProps) => {
     setError('');
     setLoading(true);
     try {
-      // createDriver always saves role: 'driver' — admin creation is blocked
       await createDriver(name.trim(), email.trim(), password);
       onClose();
     } catch (err: any) {
@@ -198,10 +196,9 @@ const AddDriverModal = ({ onClose }: AddDriverModalProps) => {
 const Drivers = () => {
   const [drivers, setDrivers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AppUser | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
     const unsub = subscribeDrivers((data) => {
@@ -210,15 +207,6 @@ const Drivers = () => {
     });
     return unsub;
   }, []);
-
-  const handleToggle = async (driver: AppUser) => {
-    setTogglingId(driver.uid);
-    try {
-      await setDriverActive(driver.uid, !driver.isActive);
-    } finally {
-      setTogglingId(null);
-    }
-  };
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
@@ -240,7 +228,7 @@ const Drivers = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Driver Management</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {drivers.length} total · {active} active
+            {drivers.length} total · {active} currently active
           </p>
         </div>
         <button
@@ -265,10 +253,10 @@ const Drivers = () => {
         </div>
         <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-center gap-4">
           <div className="h-12 w-12 bg-green-50 text-green-600 rounded-xl flex items-center justify-center">
-            <ToggleRight className="h-6 w-6" />
+            <Activity className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-xs text-gray-500 font-medium">Active Drivers</p>
+            <p className="text-xs text-gray-500 font-medium">Active Now</p>
             <p className="text-2xl font-bold text-gray-900">{active}</p>
           </div>
         </div>
@@ -310,6 +298,7 @@ const Drivers = () => {
             <tbody className="divide-y divide-gray-50">
               {drivers.map((driver) => (
                 <tr key={driver.uid} className="hover:bg-gray-50/50 transition-colors">
+                  {/* Name */}
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       <div className="h-9 w-9 rounded-full bg-[#800000]/10 text-[#800000] flex items-center justify-center font-bold text-sm">
@@ -318,53 +307,48 @@ const Drivers = () => {
                       <span className="font-medium text-gray-900">{driver.name}</span>
                     </div>
                   </td>
+
+                  {/* Email */}
                   <td className="px-6 py-4 text-gray-500">{driver.email}</td>
+
+                  {/* Status — read-only badge, driver controls this themselves */}
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
                       driver.isActive
                         ? 'bg-green-50 text-green-700'
                         : 'bg-gray-100 text-gray-500'
                     }`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${driver.isActive ? 'bg-green-500' : 'bg-gray-400'}`} />
-                      {driver.isActive ? 'Active' : 'Inactive'}
+                      {driver.isActive ? (
+                        <>
+                          <span className="relative flex h-1.5 w-1.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
+                          </span>
+                          Active
+                        </>
+                      ) : (
+                        <>
+                          <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />
+                          Offline
+                        </>
+                      )}
                     </span>
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      {/* Toggle active */}
-                      <button
-                        onClick={() => handleToggle(driver)}
-                        disabled={togglingId === driver.uid}
-                        title={driver.isActive ? 'Deactivate' : 'Activate'}
-                        className={`p-2 rounded-lg transition-colors ${
-                          driver.isActive
-                            ? 'text-green-600 hover:bg-green-50'
-                            : 'text-gray-400 hover:bg-gray-100'
-                        }`}
-                      >
-                        {togglingId === driver.uid ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : driver.isActive ? (
-                          <ToggleRight className="h-5 w-5" />
-                        ) : (
-                          <ToggleLeft className="h-5 w-5" />
-                        )}
-                      </button>
 
-                      {/* Delete */}
-                      <button
-                        onClick={() => setDeleteTarget(driver)}
-                        disabled={deletingId === driver.uid}
-                        title="Delete driver"
-                        className="p-2 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
-                      >
-                        {deletingId === driver.uid ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
+                  {/* Actions — delete only */}
+                  <td className="px-6 py-4">
+                    <button
+                      onClick={() => setDeleteTarget(driver)}
+                      disabled={deletingId === driver.uid}
+                      title="Delete driver"
+                      className="p-2 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                    >
+                      {deletingId === driver.uid ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </button>
                   </td>
                 </tr>
               ))}

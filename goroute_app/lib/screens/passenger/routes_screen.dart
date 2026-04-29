@@ -1,8 +1,15 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:goroute_app/models/route_model.dart';
+import 'package:goroute_app/models/driver_location_model.dart';
 import 'package:goroute_app/services/route_service.dart';
+import 'package:goroute_app/services/location_service.dart';
+import 'package:goroute_app/services/eta_service.dart';
 import 'package:goroute_app/screens/passenger/bus_tracking_screen.dart';
 import 'package:goroute_app/screens/passenger/saved_routes_screen.dart';
 
@@ -65,8 +72,57 @@ class _RoutesScreenState extends State<RoutesScreen>
 
 // ── Active Routes Tab ─────────────────────────────────────────────────────────
 
-class _ActiveRoutesTab extends StatelessWidget {
+class _ActiveRoutesTab extends StatefulWidget {
   const _ActiveRoutesTab();
+
+  @override
+  State<_ActiveRoutesTab> createState() => _ActiveRoutesTabState();
+}
+
+class _ActiveRoutesTabState extends State<_ActiveRoutesTab> {
+  LatLng? _passengerLatLng;
+  StreamSubscription<Position>? _posSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _startPassengerLocation();
+  }
+
+  @override
+  void dispose() {
+    _posSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _startPassengerLocation() async {
+    final granted = await LocationService().requestPermission();
+    if (!granted) return;
+
+    // One-shot fix first
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+      if (mounted) {
+        setState(() => _passengerLatLng = LatLng(pos.latitude, pos.longitude));
+      }
+    } catch (_) {}
+
+    // Then stream updates every 20 m
+    _posSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 20,
+      ),
+    ).listen((pos) {
+      if (mounted) {
+        setState(() => _passengerLatLng = LatLng(pos.latitude, pos.longitude));
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -74,40 +130,48 @@ class _ActiveRoutesTab extends StatelessWidget {
       stream: RouteService().activeRoutesStream(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF8B0000)),
+          );
         }
 
         if (snapshot.hasError) {
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return _EmptyActiveRoutes();
-        }
-
         final routes =
-            snapshot.data!.docs.map((doc) => RouteModel.fromDoc(doc)).toList()
+            (snapshot.data?.docs ?? [])
+                .map((doc) => RouteModel.fromDoc(doc))
+                .where((r) => r.isLive)
+                .toList()
               ..sort((a, b) {
                 final aT = a.createdAt ?? DateTime(0);
                 final bT = b.createdAt ?? DateTime(0);
                 return bT.compareTo(aT);
               });
 
+        if (routes.isEmpty) return _EmptyActiveRoutes();
+
         return ListView.builder(
           padding: const EdgeInsets.all(12),
           itemCount: routes.length,
-          itemBuilder: (context, i) => _ActiveRouteCard(route: routes[i]),
+          itemBuilder:
+              (context, i) => _ActiveRouteCard(
+                route: routes[i],
+                passengerLatLng: _passengerLatLng,
+              ),
         );
       },
     );
   }
 }
-
 // ── Active route card ─────────────────────────────────────────────────────────
 
 class _ActiveRouteCard extends StatefulWidget {
   final RouteModel route;
-  const _ActiveRouteCard({required this.route});
+  final LatLng? passengerLatLng;
+
+  const _ActiveRouteCard({required this.route, this.passengerLatLng});
 
   @override
   State<_ActiveRouteCard> createState() => _ActiveRouteCardState();
@@ -115,6 +179,56 @@ class _ActiveRouteCard extends StatefulWidget {
 
 class _ActiveRouteCardState extends State<_ActiveRouteCard> {
   bool _saving = false;
+
+  // Live driver location for this route
+  DriverLocationModel? _driverLoc;
+  StreamSubscription<DocumentSnapshot>? _driverSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _driverSub = LocationService()
+        .driverLocationStream(widget.route.driverId)
+        .listen((doc) {
+          if (!doc.exists || !mounted) return;
+          final data = DriverLocationModel.fromDoc(doc);
+          // Skip placeholder (0,0)
+          if (data.lat == 0.0 && data.lng == 0.0) return;
+          setState(() => _driverLoc = data);
+        });
+  }
+
+  @override
+  void dispose() {
+    _driverSub?.cancel();
+    super.dispose();
+  }
+
+  // ── Distance + ETA ────────────────────────────────────────────────────
+
+  String get _distanceLabel {
+    if (widget.passengerLatLng == null || _driverLoc == null) return '';
+    final dist = ETAService.calculateDistanceKm(
+      widget.passengerLatLng!,
+      LatLng(_driverLoc!.lat, _driverLoc!.lng),
+    );
+    final m = dist * 1000;
+    return m < 1000
+        ? '${m.toStringAsFixed(0)} m'
+        : '${dist.toStringAsFixed(1)} km';
+  }
+
+  String get _etaLabel {
+    if (widget.passengerLatLng == null || _driverLoc == null) return '';
+    final speed = _driverLoc!.speed > 5 ? _driverLoc!.speed : 30.0;
+    final eta = ETAService.calculateETA(
+      widget.passengerLatLng!,
+      LatLng(_driverLoc!.lat, _driverLoc!.lng),
+      averageSpeedKmH: speed,
+    );
+    if (eta <= 0) return 'Arrived';
+    return '$eta min';
+  }
 
   Future<void> _saveRoute() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -149,6 +263,8 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
   @override
   Widget build(BuildContext context) {
     final route = widget.route;
+    final dist = _distanceLabel;
+    final eta = _etaLabel;
 
     return Card(
       elevation: 2,
@@ -162,7 +278,7 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header row
+            // ── Header ──────────────────────────────────────────────────
             Row(
               children: [
                 Container(
@@ -184,7 +300,7 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
                     children: [
                       Text(
                         '${route.from} → ${route.to}',
-                        style: const TextStyle(
+                        style: GoogleFonts.poppins(
                           fontWeight: FontWeight.bold,
                           fontSize: 15,
                         ),
@@ -192,7 +308,7 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
                       const SizedBox(height: 2),
                       Text(
                         'Driver: ${route.driverName}',
-                        style: TextStyle(
+                        style: GoogleFonts.poppins(
                           fontSize: 12,
                           color: Colors.grey.shade600,
                         ),
@@ -216,7 +332,7 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
                       Icon(Icons.circle, size: 8, color: Colors.green),
                       SizedBox(width: 4),
                       Text(
-                        'Active',
+                        'Live',
                         style: TextStyle(
                           color: Colors.green,
                           fontSize: 11,
@@ -229,7 +345,60 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
               ],
             ),
 
-            if (route.estimatedTime.isNotEmpty) ...[
+            // ── Live distance + ETA chips ────────────────────────────────
+            if (dist.isNotEmpty || eta.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  if (dist.isNotEmpty) ...[
+                    const Icon(
+                      Icons.straighten,
+                      size: 13,
+                      color: Color(0xFF8B0000),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      dist,
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF8B0000),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                  ],
+                  if (eta.isNotEmpty) ...[
+                    Icon(
+                      Icons.access_time,
+                      size: 13,
+                      color: Colors.blue.shade700,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'ETA $eta',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.blue.shade700,
+                      ),
+                    ),
+                  ],
+                  if (_driverLoc != null) ...[
+                    const SizedBox(width: 14),
+                    Icon(Icons.speed, size: 13, color: Colors.green.shade700),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${_driverLoc!.speed.toStringAsFixed(0)} km/h',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ] else if (route.estimatedTime.isNotEmpty) ...[
               const SizedBox(height: 10),
               Row(
                 children: [
@@ -241,7 +410,10 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
                   const SizedBox(width: 4),
                   Text(
                     route.estimatedTime,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                    ),
                   ),
                 ],
               ),
@@ -249,10 +421,9 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
 
             const SizedBox(height: 14),
 
-            // Action buttons row
+            // ── Action buttons ───────────────────────────────────────────
             Row(
               children: [
-                // Save button
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: _saving ? null : _saveRoute,
@@ -276,7 +447,6 @@ class _ActiveRouteCardState extends State<_ActiveRouteCard> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                // Track button
                 Expanded(
                   flex: 2,
                   child: ElevatedButton.icon(

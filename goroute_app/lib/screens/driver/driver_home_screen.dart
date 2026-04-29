@@ -23,6 +23,27 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
   // routeId → loading flag
   final Map<String, bool> _loadingToggles = {};
 
+  @override
+  void initState() {
+    super.initState();
+    // On startup: clean up any routes that were left active from a previous
+    // session (e.g. app crash). This ensures passengers never see stale routes.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+      // Only deactivate if there is no live_locations entry for this driver
+      // (meaning they are not actually tracking right now).
+      final liveDoc =
+          await FirebaseFirestore.instance
+              .collection('live_locations')
+              .doc(uid)
+              .get();
+      if (!liveDoc.exists) {
+        await _routeService.deactivateAllRoutesForDriver(uid);
+      }
+    });
+  }
+
   // ── Toggle Active / Inactive ──────────────────────────────────────────
 
   Future<void> _toggleRoute(RouteModel route) async {
@@ -54,6 +75,13 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
           routeId: route.id,
           routeLabel: '${route.from} → ${route.to}',
         );
+        // Alert 1 — fireDriverStarted writes to passengers/{uid}/notifications
+        // which is the PASSENGER's uid, not the driver's.
+        // The driver calling this would write to their own doc — that's wrong.
+        // This alert is intentionally NOT fired here; it is fired server-side
+        // via admin or via a Cloud Function trigger on routeStatus change.
+        // For now, the notification is stored only when a passenger is actively
+        // tracking (handled in bus_tracking_screen via EtaAlertService).
       } else {
         // Stop GPS first, then mark inactive
         await _locationService.stopTracking(_user.uid);

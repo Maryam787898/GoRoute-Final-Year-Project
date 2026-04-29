@@ -39,6 +39,7 @@ class _AddRouteScreenState extends State<AddRouteScreen> {
         to: _toCtrl.text.trim(),
         estimatedTime: _timeCtrl.text.trim(),
         isActive: false, // driver activates from dashboard
+        routeStatus: 'inactive',
       );
 
       await RouteService().addRoute(route);

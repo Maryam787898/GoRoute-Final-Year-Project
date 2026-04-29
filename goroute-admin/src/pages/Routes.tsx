@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Route as RouteIcon, Trash2, ToggleLeft, ToggleRight, Loader2 } from 'lucide-react';
-import { Route, subscribeRoutes, setRouteActive, deleteRoute } from '../services/firestore';
+import { Route as RouteIcon, Trash2, Loader2, Activity } from 'lucide-react';
+import { Route, subscribeRoutes, deleteRoute } from '../services/firestore';
 
 const Routes = () => {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [loading, setLoading] = useState(true);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -15,15 +14,6 @@ const Routes = () => {
     });
     return unsub;
   }, []);
-
-  const handleToggle = async (route: Route) => {
-    setTogglingId(route.id);
-    try {
-      await setRouteActive(route.id, !route.isActive);
-    } finally {
-      setTogglingId(null);
-    }
-  };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this route?')) return;
@@ -42,7 +32,7 @@ const Routes = () => {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Route Management</h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          {routes.length} total · {active} active
+          {routes.length} total · {active} currently active
         </p>
       </div>
 
@@ -59,10 +49,10 @@ const Routes = () => {
         </div>
         <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-center gap-4">
           <div className="h-12 w-12 bg-green-50 text-green-600 rounded-xl flex items-center justify-center">
-            <ToggleRight className="h-6 w-6" />
+            <Activity className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-xs text-gray-500 font-medium">Active Routes</p>
+            <p className="text-xs text-gray-500 font-medium">Active Now</p>
             <p className="text-2xl font-bold text-gray-900">{active}</p>
           </div>
         </div>
@@ -105,6 +95,7 @@ const Routes = () => {
             <tbody className="divide-y divide-gray-50">
               {routes.map((route) => (
                 <tr key={route.id} className="hover:bg-gray-50/50 transition-colors">
+                  {/* Route */}
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">
                       <div className="h-8 w-8 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center">
@@ -115,50 +106,51 @@ const Routes = () => {
                       </span>
                     </div>
                   </td>
+
+                  {/* Driver */}
                   <td className="px-6 py-4 text-gray-500">{route.driverName}</td>
+
+                  {/* Duration */}
                   <td className="px-6 py-4 text-gray-500">{route.estimatedTime}</td>
+
+                  {/* Status — read-only, driver controls this */}
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
                       route.isActive
                         ? 'bg-green-50 text-green-700'
                         : 'bg-gray-100 text-gray-500'
                     }`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${route.isActive ? 'bg-green-500' : 'bg-gray-400'}`} />
-                      {route.isActive ? 'Active' : 'Inactive'}
+                      {route.isActive ? (
+                        <>
+                          <span className="relative flex h-1.5 w-1.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
+                          </span>
+                          Active
+                        </>
+                      ) : (
+                        <>
+                          <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />
+                          Inactive
+                        </>
+                      )}
                     </span>
                   </td>
+
+                  {/* Actions — delete only */}
                   <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleToggle(route)}
-                        disabled={togglingId === route.id}
-                        title={route.isActive ? 'Deactivate' : 'Activate'}
-                        className={`p-2 rounded-lg transition-colors ${
-                          route.isActive
-                            ? 'text-green-600 hover:bg-green-50'
-                            : 'text-gray-400 hover:bg-gray-100'
-                        }`}
-                      >
-                        {togglingId === route.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : route.isActive ? (
-                          <ToggleRight className="h-5 w-5" />
-                        ) : (
-                          <ToggleLeft className="h-5 w-5" />
-                        )}
-                      </button>
-                      <button
-                        onClick={() => handleDelete(route.id)}
-                        disabled={deletingId === route.id}
-                        className="p-2 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
-                      >
-                        {deletingId === route.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => handleDelete(route.id)}
+                      disabled={deletingId === route.id}
+                      title="Delete route"
+                      className="p-2 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                    >
+                      {deletingId === route.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </button>
                   </td>
                 </tr>
               ))}

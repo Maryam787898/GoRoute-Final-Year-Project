@@ -13,7 +13,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
     <application
-        android:label="goroute_app"
+        android:label="Go Route"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
