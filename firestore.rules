@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && userRole() == 'admin';
+    }
+
+    function isDriver() {
+      return isSignedIn() && userRole() == 'driver';
+    }
+
+    function isPassenger() {
+      return isSignedIn() && userRole() == 'passenger';
+    }
+
+    // ── users ───────────────────────────────────────────────────────────────
+    // Any signed-in user can read their own doc.
+    // Admin can read/write all user docs.
+    // New users can create their own doc on registration.
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ── routes ──────────────────────────────────────────────────────────────
+    // Passengers and admin can read all routes.
+    // Drivers can create/update/delete their own routes.
+    match /routes/{routeId} {
+      allow read: if isSignedIn();
+      allow create: if isDriver();
+      allow update: if isDriver() || isAdmin();
+      allow delete: if isDriver() || isAdmin();
+    }
+
+    // ── live_locations ──────────────────────────────────────────────────────
+    // Anyone signed in can read (passengers need to see all buses).
+    // Only the driver themselves can write their own location doc.
+    match /live_locations/{driverId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == driverId;
+      allow delete: if isSignedIn() && (request.auth.uid == driverId || isAdmin());
+    }
+
+    // ── notifications (broadcast) ───────────────────────────────────────────
+    // Anyone signed in can read. Only admin can write.
+    match /notifications/{notifId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ── passenger notifications (per-user sub-collection) ──────────────────
+    match /passengers/{uid}/notifications/{notifId} {
+      allow read, delete: if isSignedIn() && request.auth.uid == uid;
+      allow create, update: if isSignedIn();
+    }
+
+    // ── support_requests ────────────────────────────────────────────────────
+    match /support_requests/{requestId} {
+      allow read: if isSignedIn() && (
+        resource.data.senderId == request.auth.uid || isAdmin()
+      );
+      allow create: if isSignedIn();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+
+      // Sub-collection: messages
+      match /messages/{msgId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow delete: if isAdmin();
+      }
+    }
+
+    // ── trips ───────────────────────────────────────────────────────────────
+    match /trips/{tripId} {
+      allow read: if isSignedIn() && (
+        resource.data.driverId == request.auth.uid || isAdmin()
+      );
+      allow write: if isDriver() || isAdmin();
+    }
+
+  }
+}
